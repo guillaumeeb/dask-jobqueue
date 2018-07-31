@@ -2,16 +2,12 @@ from __future__ import absolute_import, division, print_function
 
 import logging
 import math
-import os
-import sys
 
 import dask
 
 from .core import JobQueueCluster, docstrings
 
 logger = logging.getLogger(__name__)
-
-dirname = os.path.dirname(sys.executable)
 
 
 class SLURMCluster(JobQueueCluster):
@@ -44,7 +40,7 @@ class SLURMCluster(JobQueueCluster):
                                env_extra=['export LANG="en_US.utf8"',
                                           'export LANGUAGE="en_US.utf8"',
                                           'export LC_ALL="en_US.utf8"'])
-    >>> cluster.start_workers(10)  # this may take a few seconds to launch
+    >>> cluster.scale(10)  # this may take a few seconds to launch
 
     >>> from dask.distributed import Client
     >>> client = Client(cluster)
@@ -55,23 +51,30 @@ class SLURMCluster(JobQueueCluster):
     >>> cluster.adapt()
     """, 4)
 
-    #Override class variables
+    # Override class variables
     submit_command = 'sbatch --parsable'
     cancel_command = 'scancel'
+    scheduler_name = 'slurm'
 
-    def __init__(self,
-                 queue=dask.config.get('jobqueue.queue'),
-                 project=dask.config.get('jobqueue.project'),
-                 walltime=dask.config.get('jobqueue.walltime'),
-                 job_cpu=dask.config.get('jobqueue.slurm.job-cpu'),
-                 job_mem=dask.config.get('jobqueue.slurm.job-mem'),
-                 job_extra=dask.config.get('jobqueue.slurm.job-extra'),
-                 **kwargs):
+    def __init__(self, queue=None, project=None, walltime=None,
+                 job_cpu=None, job_mem=None, job_extra=None, **kwargs):
+        if queue is None:
+            queue = dask.config.get('jobqueue.slurm.queue')
+        if project is None:
+            project = dask.config.get('jobqueue.slurm.project')
+        if walltime is None:
+            walltime = dask.config.get('jobqueue.slurm.walltime')
+        if job_cpu is None:
+            job_cpu = dask.config.get('jobqueue.slurm.job-cpu')
+        if job_mem is None:
+            job_mem = dask.config.get('jobqueue.slurm.job-mem')
+        if job_extra is None:
+            job_extra = dask.config.get('jobqueue.slurm.job-extra')
 
         super(SLURMCluster, self).__init__(**kwargs)
 
         # Always ask for only one task
-        header_lines = []
+        header_lines = ['#!/usr/bin/env bash']
         # SLURM header build
         if self.name is not None:
             header_lines.append('#SBATCH -J %s' % self.name)
@@ -85,21 +88,19 @@ class SLURMCluster(JobQueueCluster):
         # Init resources, always 1 task,
         # and then number of cpu is processes * threads if not set
         header_lines.append('#SBATCH -n 1')
-        ncpus = job_cpu
-        if ncpus is None:
-            ncpus = self.worker_processes * self.worker_threads
-        header_lines.append('#SBATCH --cpus-per-task=%d' % ncpus)
+        header_lines.append('#SBATCH --cpus-per-task=%d' % (job_cpu or self.worker_cores))
         # Memory
-        total_memory = job_mem
-        if job_mem is None and self.worker_memory is not None:
-            memory = self.worker_processes * self.worker_memory
-            total_memory = slurm_format_bytes_ceil(memory)
-        if total_memory is not None:
-            header_lines.append('#SBATCH --mem=%s' % total_memory)
+        memory = job_mem
+        if job_mem is None:
+            memory = slurm_format_bytes_ceil(self.worker_memory)
+        if memory is not None:
+            header_lines.append('#SBATCH --mem=%s' % memory)
 
         if walltime is not None:
             header_lines.append('#SBATCH -t %s' % walltime)
         header_lines.extend(['#SBATCH %s' % arg for arg in job_extra])
+
+        header_lines.append('JOB_ID=${SLURM_JOB_ID%;*}')
 
         # Declare class attribute that shall be overriden
         self.job_header = '\n'.join(header_lines)

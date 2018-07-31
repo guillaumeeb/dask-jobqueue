@@ -30,7 +30,7 @@ class MoabCluster(PBSCluster):
                               memory='16G', resource_spec='96G',
                               job_extra=['-d /home/First.Last', '-M none'],
                               local_directory=os.getenv('TMPDIR', '/tmp'))
-    >>> cluster.start_workers(10)  # this may take a few seconds to launch
+    >>> cluster.start_workers(10)  # submit enough jobs to deploy 10 workers
 
     >>> from dask.distributed import Client
     >>> client = Client(cluster)
@@ -42,6 +42,7 @@ class MoabCluster(PBSCluster):
     """, 4)
     submit_command = 'msub'
     cancel_command = 'canceljob'
+    scheduler_name = 'moab'
 
     def _job_id_from_submit_output(self, out):
         return out.strip()

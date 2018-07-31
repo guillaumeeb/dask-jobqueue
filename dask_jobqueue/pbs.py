@@ -35,7 +35,7 @@ class PBSCluster(JobQueueCluster):
     --------
     >>> from dask_jobqueue import PBSCluster
     >>> cluster = PBSCluster(queue='regular', project='DaskOnPBS')
-    >>> cluster.start_workers(10)  # this may take a few seconds to launch
+    >>> cluster.scale(10)  # this may take a few seconds to launch
 
     >>> from dask.distributed import Client
     >>> client = Client(cluster)
@@ -50,22 +50,27 @@ class PBSCluster(JobQueueCluster):
     and threads asked:
 
     >>> cluster = PBSCluster(queue='regular', project='DaskOnPBS',
-                             local_directory=os.getenv('TMPDIR', '/tmp'),
-                             threads=4, processes=6, memory='16GB',
-                             resource_spec='select=1:ncpus=24:mem=100GB')
+    ...                      local_directory=os.getenv('TMPDIR', '/tmp'),
+    ...                      threads=4, processes=6, memory='16GB',
+    ...                      resource_spec='select=1:ncpus=24:mem=100GB')
     """, 4)
 
     # Override class variables
     submit_command = 'qsub'
     cancel_command = 'qdel'
+    scheduler_name = 'pbs'
 
-    def __init__(self,
-                 queue=dask.config.get('jobqueue.queue'),
-                 project=dask.config.get('jobqueue.project'),
-                 resource_spec=dask.config.get('jobqueue.pbs.resource-spec'),
-                 walltime=dask.config.get('jobqueue.walltime'),
-                 job_extra=dask.config.get('jobqueue.pbs.job-extra'),
-                 **kwargs):
+    def __init__(self, queue=None, project=None, resource_spec=None, walltime=None, job_extra=None, **kwargs):
+        if queue is None:
+            queue = dask.config.get('jobqueue.%s.queue' % self.scheduler_name)
+        if resource_spec is None:
+            resource_spec = dask.config.get('jobqueue.%s.resource-spec' % self.scheduler_name)
+        if walltime is None:
+            walltime = dask.config.get('jobqueue.%s.walltime' % self.scheduler_name)
+        if job_extra is None:
+            job_extra = dask.config.get('jobqueue.%s.job-extra' % self.scheduler_name)
+        if project is None:
+            project = dask.config.get('jobqueue.%s.project' % self.scheduler_name) or os.environ.get('PBS_ACCOUNT')
 
         # Instantiate args and parameters from parent abstract class
         super(PBSCluster, self).__init__(**kwargs)
@@ -73,7 +78,7 @@ class PBSCluster(JobQueueCluster):
         # Try to find a project name from environment variable
         project = project or os.environ.get('PBS_ACCOUNT')
 
-        header_lines = []
+        header_lines = ['#!/usr/bin/env bash']
         # PBS header build
         if self.name is not None:
             header_lines.append('#PBS -N %s' % self.name)
@@ -83,16 +88,17 @@ class PBSCluster(JobQueueCluster):
             header_lines.append('#PBS -A %s' % project)
         if resource_spec is None:
             # Compute default resources specifications
-            ncpus = self.worker_processes * self.worker_threads
-            memory = self.worker_memory * self.worker_processes
-            memory_string = pbs_format_bytes_ceil(memory)
-            resource_spec = "select=1:ncpus=%d:mem=%s" % (ncpus, memory_string)
+            resource_spec = "select=1:ncpus=%d" % self.worker_cores
+            memory_string = pbs_format_bytes_ceil(self.worker_memory)
+            resource_spec += ':mem=' + memory_string
             logger.info("Resource specification for PBS not set, "
                         "initializing it to %s" % resource_spec)
-        header_lines.append('#PBS -l %s' % resource_spec)
+        if resource_spec is not None:
+            header_lines.append('#PBS -l %s' % resource_spec)
         if walltime is not None:
             header_lines.append('#PBS -l walltime=%s' % walltime)
         header_lines.extend(['#PBS %s' % arg for arg in job_extra])
+        header_lines.append('JOB_ID=${PBS_JOBID%.*}')
 
         # Declare class attribute that shall be overriden
         self.job_header = '\n'.join(header_lines)

@@ -1,3 +1,5 @@
+from __future__ import absolute_import, division, print_function
+
 import logging
 
 import dask
@@ -28,7 +30,7 @@ class SGECluster(JobQueueCluster):
     --------
     >>> from dask_jobqueue import SGECluster
     >>> cluster = SGECluster(queue='regular')
-    >>> cluster.start_workers(10)  # this may take a few seconds to launch
+    >>> cluster.scale(10)  # this may take a few seconds to launch
 
     >>> from dask.distributed import Client
     >>> client = Client(cluster)
@@ -42,18 +44,21 @@ class SGECluster(JobQueueCluster):
     # Override class variables
     submit_command = 'qsub -terse'
     cancel_command = 'qdel'
+    scheduler_name = 'sge'
 
-    def __init__(self,
-                 queue=dask.config.get('jobqueue.queue'),
-                 project=dask.config.get('jobqueue.project'),
-                 resource_spec=dask.config.get('jobqueue.sge.resource-spec'),
-                 walltime=dask.config.get('jobqueue.walltime'),
-                 **kwargs):
+    def __init__(self, queue=None, project=None, resource_spec=None, walltime=None, **kwargs):
+        if queue is None:
+            queue = dask.config.get('jobqueue.%s.queue' % self.scheduler_name)
+        if project is None:
+            project = dask.config.get('jobqueue.%s.project' % self.scheduler_name)
+        if resource_spec is None:
+            resource_spec = dask.config.get('jobqueue.%s.resource-spec' % self.scheduler_name)
+        if walltime is None:
+            walltime = dask.config.get('jobqueue.%s.walltime' % self.scheduler_name)
 
         super(SGECluster, self).__init__(**kwargs)
 
-        header_lines = ['#!/bin/bash']
-
+        header_lines = ['#!/usr/bin/env bash']
         if self.name is not None:
             header_lines.append('#$ -N %(name)s')
         if queue is not None:
