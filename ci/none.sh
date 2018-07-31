@@ -17,7 +17,7 @@ function jobqueue_install {
 }
 
 function jobqueue_script {
-  flake8 -j auto dask_jobqueue
+  flake8 -j auto dask_jobqueue && \
   py.test --verbose
 }
 
